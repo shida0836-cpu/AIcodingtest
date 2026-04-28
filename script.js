@@ -102,6 +102,29 @@ const state = {
     completed: 0,
     rewardsClaimed: 0
   },
+  weather: {
+    current: "clear",
+    stepCountdown: 7,
+    transitions: 0,
+    map: {
+      clear: {
+        label: "Ceu Limpo",
+        desc: "Visibilidade total e trilhas secas."
+      },
+      rain: {
+        label: "Chuva",
+        desc: "Movimento pesado; fugas ficam um pouco mais faceis."
+      },
+      fog: {
+        label: "Neblina",
+        desc: "Baixa visibilidade reduz dano e aumenta erros."
+      },
+      storm: {
+        label: "Tempestade",
+        desc: "Confrontos ficam brutais e mais frequentes."
+      }
+    }
+  },
   crafting: {
     focusLevel: 0,
     attempts: 0,
@@ -264,6 +287,7 @@ function renderCombatHud() {
       ? `Ultima Chance pronta (${stand.charges})`
       : "Ultima Chance esgotada";
 
+  const weather = getWeatherState();
   tags.innerHTML = `
     <span class="tag">${pulse}</span>
     <span class="tag warn">${overheat}</span>
@@ -273,6 +297,7 @@ function renderCombatHud() {
     <span class="tag market">${marketState}</span>
     <span class="tag objective">${objectiveState}</span>
     <span class="tag stand ${stand.charges > 0 ? "ready" : "spent"}">${lastStandState}</span>
+    <span class="tag weather ${weather.key}">Clima: ${weather.label}</span>
   `;
 
   hint.textContent = state.battle
@@ -281,6 +306,47 @@ function renderCombatHud() {
 
   const marketHint = $("market-hint");
   if (marketHint) marketHint.textContent = `Mercado: ${marketState}.`;
+}
+
+function getWeatherState() {
+  const key = state.weather.current;
+  const fallback = state.weather.map.clear;
+  const data = state.weather.map[key] || fallback;
+  return { key, label: data.label, desc: data.desc };
+}
+
+function shiftWeatherIfNeeded() {
+  state.weather.stepCountdown -= 1;
+  if (state.weather.stepCountdown > 0) return;
+  const keys = Object.keys(state.weather.map).filter((entry) => entry !== state.weather.current);
+  const next = keys[rand(0, keys.length - 1)];
+  state.weather.current = next;
+  state.weather.stepCountdown = rand(5, 9);
+  state.weather.transitions += 1;
+  const weather = getWeatherState();
+  log(`O clima mudou para ${weather.label.toLowerCase()}: ${weather.desc}`, "warn");
+}
+
+function renderWeather() {
+  const panel = $("weather-panel");
+  if (!panel) return;
+  const weather = getWeatherState();
+  const countdown = state.weather.stepCountdown;
+  const hint =
+    weather.key === "storm"
+      ? "Tempestade aumenta chance de encontros e dano geral de combate."
+      : weather.key === "rain"
+        ? "Chuva facilita fuga e reduz eficiencia de deslocamento."
+        : weather.key === "fog"
+          ? "Neblina reduz visibilidade: mais erros e dano levemente menor."
+          : "Ceu limpo: condicoes estaveis para combate e exploracao.";
+  panel.innerHTML = `
+    <h2>Clima Dinamico</h2>
+    <p class="weather-summary">Agora: <strong>${weather.label}</strong></p>
+    <p>${weather.desc}</p>
+    <p class="weather-detail">${hint}</p>
+    <small>Proxima mudanca estimada em ${countdown} passo(s). Transicoes na run: ${state.weather.transitions}.</small>
+  `;
 }
 
 function renderLastStand() {
@@ -688,6 +754,7 @@ function move() {
   if (state.progressoLocal < passosN) {
     state.progressoLocal += 1;
     state.passos += 1;
+    shiftWeatherIfNeeded();
     bumpObjective("walk");
     coolDownMarket();
     tickShrineCooldown();
@@ -732,8 +799,12 @@ function checkEvent(nomeLocal) {
 
     if (ev === "monstro") {
       const forestBias = FactionReputation.getForestEncounterBias(state.reputation);
-      const encounterRoll = rand(1, 2 + (forestBias < 0 ? 1 : 0));
-      const triggered = forestBias > 0 ? encounterRoll <= 2 : encounterRoll === 1;
+      const weather = getWeatherState();
+      const rangeBase = 2 + (forestBias < 0 ? 1 : 0) + (weather.key === "fog" ? 1 : 0);
+      const encounterRoll = rand(1, Math.max(2, rangeBase));
+      const baseTrigger = forestBias > 0 ? encounterRoll <= 2 : encounterRoll === 1;
+      const stormBoost = weather.key === "storm" && encounterRoll <= 2;
+      const triggered = baseTrigger || stormBoost;
       if (!triggered) continue;
       const tmon = rand(1, 3);
       state.inimigo = criarMonstro(tmon);
@@ -809,7 +880,11 @@ function mostrarStatusCombate() {
 function cdamage(attacker, defender) {
   const base = attacker.str - Math.floor(defender.dfc / 2.5);
   const bonus = attacker.spd / 4 + attacker.lvl / 3;
-  return Math.max(Math.floor(base + bonus), 1);
+  const weather = getWeatherState();
+  let mult = 1;
+  if (weather.key === "fog") mult -= 0.1;
+  if (weather.key === "storm") mult += 0.12;
+  return Math.max(Math.floor((base + bonus) * mult), 1);
 }
 
 function defesa(atacante, defendendo) {
@@ -825,6 +900,11 @@ function ataque(alvo, atacante) {
   }
 
   let damage = cdamage(atacante, alvo);
+  const weather = getWeatherState();
+  if (weather.key === "fog" && rand(1, 100) <= 16) {
+    log(`A neblina atrapalhou ${atacante.name}; o golpe errou.`, "warn");
+    damage = 0;
+  }
 
   if (alvo.spd > atacante.spd && state.chance === 1) {
     log(`${alvo.name} esquivou-se!`, "good");
@@ -848,7 +928,9 @@ function ataque(alvo, atacante) {
 }
 
 function fuga(jogador, inimigo) {
-  if (jogador.spd >= inimigo.spd) {
+  const weather = getWeatherState();
+  const rainAdv = weather.key === "rain" ? 2 : 0;
+  if (jogador.spd + rainAdv >= inimigo.spd) {
     log("Voce escapou.", "good");
     return true;
   }
@@ -869,6 +951,12 @@ function playerTurn(action) {
     }
   }
   state.chance = p.spd >= i.spd * 1.5 || p.spd * 1.5 <= i.spd ? rand(1, 2) : rand(1, 3);
+  const weather = getWeatherState();
+  if (weather.key === "rain") state.chance = Math.min(3, state.chance + 1);
+  if (weather.key === "storm") {
+    p.sta = Math.max(0, p.sta - 1);
+    log("Tempestade drenou 1 stamina no seu turno.", "warn");
+  }
   trackPlayerPattern(action);
 
   if (action === "attack") {
@@ -920,6 +1008,10 @@ function enemyTurn() {
   if (!state.inimigo || !state.battle) return;
   const p = state.player;
   const i = state.inimigo;
+  const weather = getWeatherState();
+  if (weather.key === "storm") {
+    i.sta = Math.max(0, i.sta - 1);
+  }
 
   i.dfcup = false;
   i.fullDef = false;
@@ -1377,6 +1469,7 @@ function renderAll() {
   renderLootFeed();
   renderObjectives();
   renderLastStand();
+  renderWeather();
   updateCombatButtons();
 }
 
@@ -1510,6 +1603,7 @@ function startGame() {
   log("A run recebeu objetivos secundarios com recompensas cumulativas.", "warn");
   log("Ultima Chance: ao cair em 0 HP com carga disponivel, voce revive automaticamente.", "warn");
   log("Na Loja da Vila, use a Forja de Precisao para tentar breakthroughs epicos.", "warn");
+  log("O mundo agora possui clima dinamico que altera encontros e combate.", "warn");
   renderAll();
 }
 
