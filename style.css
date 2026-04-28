@@ -179,10 +179,46 @@ body {
   color: #96f0da;
 }
 
+.tag.stand {
+  border-color: #8b5151;
+  color: #f5b6b6;
+}
+
+.tag.stand.ready {
+  border-color: #4d8a68;
+  color: #a7f7cb;
+}
+
+.tag.stand.spent {
+  border-color: #7e4444;
+  color: #e49f9f;
+}
+
 .objectives-panel {
   margin-bottom: 0.75rem;
   border-color: #2e5f55;
   background: linear-gradient(180deg, #172825, #111f1c);
+}
+
+.last-stand-panel {
+  margin-bottom: 0.75rem;
+  border-color: #754747;
+  background: linear-gradient(180deg, #2b1b1b, #1f1414);
+}
+
+.last-stand-panel h2 {
+  margin: 0;
+}
+
+.stand-summary {
+  margin: 0.35rem 0 0.5rem;
+  color: #f4c9c9;
+}
+
+.stand-detail {
+  margin-top: 0.45rem;
+  color: #d2b0b0;
+  font-size: 0.9rem;
 }
 
 .objectives-head h2 {
@@ -473,6 +509,10 @@ input:focus-visible {
   .objective-top {
     flex-direction: column;
     gap: 0.2rem;
+  }
+
+  .last-stand-panel {
+    padding: 0.7rem;
   }
 
   #inventory-panel .row {

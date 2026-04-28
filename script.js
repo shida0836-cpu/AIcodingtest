@@ -102,6 +102,17 @@ const state = {
     completed: 0,
     rewardsClaimed: 0
   },
+  lastStand: {
+    charges: 1,
+    maxCharges: 2,
+    revivePercent: 0.45,
+    active: false,
+    activeTurns: 0,
+    staminaDrain: 2,
+    strBonus: 3,
+    spdBonus: 2,
+    triggeredThisBattle: false
+  },
   hdef: false,
   inventories: new Map(),
   shopStock: [
@@ -239,6 +250,12 @@ function renderCombatHud() {
   const objectiveState = state.objectives.run.length > 0
     ? `Objetivos ${state.objectives.completed}/${state.objectives.run.length}`
     : "Objetivos inativos";
+  const stand = state.lastStand;
+  const lastStandState = stand.active
+    ? `Ultima Chance ativa (${stand.activeTurns} turno)`
+    : stand.charges > 0
+      ? `Ultima Chance pronta (${stand.charges})`
+      : "Ultima Chance esgotada";
 
   tags.innerHTML = `
     <span class="tag">${pulse}</span>
@@ -248,6 +265,7 @@ function renderCombatHud() {
     <span class="tag loot">${lootState}</span>
     <span class="tag market">${marketState}</span>
     <span class="tag objective">${objectiveState}</span>
+    <span class="tag stand ${stand.charges > 0 ? "ready" : "spent"}">${lastStandState}</span>
   `;
 
   hint.textContent = state.battle
@@ -256,6 +274,26 @@ function renderCombatHud() {
 
   const marketHint = $("market-hint");
   if (marketHint) marketHint.textContent = `Mercado: ${marketState}.`;
+}
+
+function renderLastStand() {
+  const panel = $("last-stand-panel");
+  if (!panel) return;
+  const stand = state.lastStand;
+  const chargeState =
+    stand.charges > 0 ? `${stand.charges}/${stand.maxCharges} cargas` : "Sem cargas";
+  const status = stand.active
+    ? `Ultima Chance ativa por ${stand.activeTurns} turno(s): +${stand.strBonus} Forca e +${stand.spdBonus} Velocidade.`
+    : stand.charges > 0
+      ? "Pronta para ativar automaticamente ao chegar em 0 HP."
+      : "Esgotada. Conclua objetivos da run para recuperar carga.";
+
+  panel.innerHTML = `
+    <h2>Ultima Chance</h2>
+    <p class="stand-summary">Carga atual: <strong>${chargeState}</strong></p>
+    <p>${status}</p>
+    <p class="stand-detail">Ao cair em 0 HP, voce revive com ${Math.floor(stand.revivePercent * 100)}% da vida e bonus temporario.</p>
+  `;
 }
 
 function renderEnemyAdaptation() {
@@ -318,8 +356,16 @@ function bumpObjective(id, amount = 1) {
         `Objetivo concluido: ${objective.label}. Recompensa: +${objective.reward.gold} ouro e +${objective.reward.statsPoint} pontos.`,
         "good"
       );
+      grantLastStandCharge("Objetivo concluido");
     }
   });
+}
+
+function grantLastStandCharge(reason) {
+  const stand = state.lastStand;
+  if (stand.charges >= stand.maxCharges) return;
+  stand.charges += 1;
+  log(`${reason}: voce recuperou 1 carga de Ultima Chance.`, "good");
 }
 
 function renderObjectives() {
@@ -675,6 +721,7 @@ function checkEvent(nomeLocal) {
 
 function startBattle(message) {
   state.battle = true;
+  state.lastStand.triggeredThisBattle = false;
   state.enemyEvolution.actionCount.attack = 0;
   state.enemyEvolution.actionCount.defend = 0;
   state.enemyEvolution.actionCount.overheat = 0;
@@ -685,6 +732,8 @@ function startBattle(message) {
 }
 
 function endBattle() {
+  clearLastStandBuff();
+  state.lastStand.triggeredThisBattle = false;
   state.battle = false;
   state.inimigo = null;
   $("combat-controls").classList.add("hidden");
@@ -812,6 +861,7 @@ function playerTurn(action) {
   enemyTurn();
   checkBattleEnd();
   tickShrineCombatTurn();
+  tickLastStandTurn();
   updateCombatButtons();
   renderAll();
 }
@@ -857,12 +907,18 @@ function checkBattleEnd() {
   const i = state.inimigo;
   if (!i) return true;
 
+  if (p.hp <= 0 && tryActivateLastStand()) {
+    mostrarStatusCombate();
+    return false;
+  }
+
   if (p.hp <= 0) {
     log("Voce perdeu! Recuperando para continuar...", "bad");
     const adapt = AdaptiveDifficulty.pushResult(state.difficulty, "loss");
     if (adapt && adapt.message) log(adapt.message, "warn");
     p.hp = p.maxhp;
     p.sta = p.maxsta;
+    clearLastStandBuff();
     clearEnemyEvolutionTag();
     endBattle();
     return true;
@@ -882,6 +938,7 @@ function checkBattleEnd() {
     p.hp = p.maxhp;
     p.sta = p.maxsta;
     p.dfcup = false;
+    clearLastStandBuff();
 
     if (state.passos >= 300) {
       log("Venceu o jogo!", "good");
@@ -1204,7 +1261,58 @@ function renderAll() {
   renderShrine();
   renderLootFeed();
   renderObjectives();
+  renderLastStand();
   updateCombatButtons();
+}
+
+function tryActivateLastStand() {
+  const stand = state.lastStand;
+  const p = state.player;
+  if (!p) return false;
+  if (stand.active || stand.triggeredThisBattle || stand.charges <= 0) return false;
+
+  stand.charges -= 1;
+  stand.active = true;
+  stand.activeTurns = 3;
+  stand.triggeredThisBattle = true;
+  p.hp = Math.max(1, Math.floor(p.maxhp * stand.revivePercent));
+  p.sta = Math.max(1, Math.min(p.maxsta, p.sta + 4));
+  p.str += stand.strBonus;
+  p.maxstr += stand.strBonus;
+  p.spd += stand.spdBonus;
+  p.maxspd += stand.spdBonus;
+  log("Ultima Chance ativada! Voce voltou ao combate com poder extra por 3 turnos.", "warn");
+  return true;
+}
+
+function clearLastStandBuff() {
+  const stand = state.lastStand;
+  const p = state.player;
+  if (!p || !stand.active) {
+    stand.active = false;
+    stand.activeTurns = 0;
+    return;
+  }
+  p.str = Math.max(1, p.str - stand.strBonus);
+  p.maxstr = Math.max(1, p.maxstr - stand.strBonus);
+  p.spd = Math.max(1, p.spd - stand.spdBonus);
+  p.maxspd = Math.max(1, p.maxspd - stand.spdBonus);
+  p.hp = Math.min(p.hp, p.maxhp);
+  p.sta = Math.min(p.sta, p.maxsta);
+  stand.active = false;
+  stand.activeTurns = 0;
+}
+
+function tickLastStandTurn() {
+  const stand = state.lastStand;
+  const p = state.player;
+  if (!stand.active || !p || !state.battle) return;
+  stand.activeTurns -= 1;
+  p.sta = Math.max(0, p.sta - stand.staminaDrain);
+  if (stand.activeTurns <= 0) {
+    clearLastStandBuff();
+    log("A energia da Ultima Chance se dissipou.", "warn");
+  }
 }
 
 function offerShrinePact() {
@@ -1285,6 +1393,7 @@ function startGame() {
   log("No combate: atacar, defender e fugir.");
   log("Sua reputacao com Vila e Selva altera precos e risco de encontros.");
   log("A run recebeu objetivos secundarios com recompensas cumulativas.", "warn");
+  log("Ultima Chance: ao cair em 0 HP com carga disponivel, voce revive automaticamente.", "warn");
   renderAll();
 }
 
