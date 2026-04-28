@@ -70,6 +70,23 @@ const state = {
     active: false,
     lastOfferCost: 0
   },
+  loot: {
+    lastDrops: [],
+    rarityWeights: [
+      { key: "Comum", weight: 52, damageMult: 1, buffDelta: 0, css: "common" },
+      { key: "Incomum", weight: 28, damageMult: 1.18, buffDelta: 1, css: "uncommon" },
+      { key: "Raro", weight: 14, damageMult: 1.38, buffDelta: 2, css: "rare" },
+      { key: "Epico", weight: 6, damageMult: 1.62, buffDelta: 3, css: "epic" }
+    ]
+  },
+  market: {
+    baseline: 1,
+    min: 0.75,
+    max: 1.85,
+    demandByItem: {},
+    driftPerStep: 0.04,
+    lastSignals: []
+  },
   hdef: false,
   inventories: new Map(),
   shopStock: [
@@ -154,6 +171,7 @@ function renderStatus() {
     <div>Calor de Parry: ${state.parry.heat}/${state.parry.maxHeat}</div>
     <div>Overheat: ${state.parry.overheatedTurns > 0 ? `Ativo (${state.parry.overheatedTurns} turno)` : "Nao"}</div>
     <div>Pacto do Santuario: ${state.shrine.active ? `Ativo (${state.shrine.activeTurns} turno)` : "Inativo"}</div>
+    <div>Ultimo loot: ${state.loot.lastDrops[0] ? `${state.loot.lastDrops[0].displayName} (${state.loot.lastDrops[0].rarity})` : "Nenhum"}</div>
   `;
 }
 
@@ -199,17 +217,26 @@ function renderCombatHud() {
       : state.shrine.cooldown > 0
         ? `Santuario em recarga (${state.shrine.cooldown} passos)`
         : "Santuario pronto";
+  const lootState = state.loot.lastDrops[0]
+    ? `Loot: ${state.loot.lastDrops[0].rarity}`
+    : "Loot: sem drop recente";
+  const marketState = getMarketPulseLabel();
 
   tags.innerHTML = `
     <span class="tag">${pulse}</span>
     <span class="tag warn">${overheat}</span>
     <span class="tag good">${encounter}</span>
     <span class="tag shrine">${shrineState}</span>
+    <span class="tag loot">${lootState}</span>
+    <span class="tag market">${marketState}</span>
   `;
 
   hint.textContent = state.battle
     ? "Combate ativo: reaja entre ataque, defesa e overheat."
     : "Explore para encontrar inimigos e ganhar reputacao.";
+
+  const marketHint = $("market-hint");
+  if (marketHint) marketHint.textContent = `Mercado: ${marketState}.`;
 }
 
 function shiftReputation(faction, delta, reason) {
@@ -259,12 +286,39 @@ function renderInventory() {
   inv.forEach((item, idx) => {
     const row = document.createElement("div");
     row.className = "row";
-    row.innerHTML = `<span>${idx + 1}. ${item.name} (dano ${item.dano})</span>`;
+    const rarity = item.rarity ? `<em class="rarity ${item.rarityClass || "common"}">${item.rarity}</em>` : "";
+    const affix = item.affixLabel ? `<small>${item.affixLabel}</small>` : "";
+    row.innerHTML = `<span>${idx + 1}. ${item.name} ${rarity} ${affix} (dano ${item.dano})</span>`;
     const b = document.createElement("button");
     b.textContent = "Equipar";
     b.onclick = () => equipItem(idx);
     row.appendChild(b);
+    const sell = document.createElement("button");
+    sell.textContent = "Vender";
+    sell.onclick = () => sellItem(idx);
+    row.appendChild(sell);
     panel.appendChild(row);
+  });
+}
+
+function renderLootFeed() {
+  const panel = $("loot-panel");
+  if (!panel) return;
+  if (state.loot.lastDrops.length === 0) {
+    panel.innerHTML = "<h3>Loot recente</h3><p>Nenhum drop registrado.</p>";
+    return;
+  }
+
+  panel.innerHTML = "<h3>Loot recente</h3>";
+  state.loot.lastDrops.forEach((drop, idx) => {
+    const item = document.createElement("div");
+    item.className = "loot-item";
+    item.innerHTML = `
+      <span><strong>${idx + 1}.</strong> ${drop.displayName}</span>
+      <span class="rarity ${drop.rarityClass}">${drop.rarity}</span>
+      <small>${drop.affixLabel}</small>
+    `;
+    panel.appendChild(item);
   });
 }
 
@@ -272,18 +326,87 @@ function renderShop() {
   const panel = $("shop-panel");
   panel.innerHTML = "<h3>Loja</h3>";
   const mult = FactionReputation.getShopPriceMultiplier(state.reputation);
+  const trendWrap = document.createElement("div");
+  trendWrap.className = "shop-trend-wrap";
+  trendWrap.innerHTML = `<small>${getMarketSummary()}</small>`;
+  panel.appendChild(trendWrap);
 
   state.shopStock.forEach((item, idx) => {
-    const preco = Math.max(1, Math.floor(item.dano * 2 * mult));
+    const surge = getSurgeMultiplier(item.name);
+    const preco = Math.max(1, Math.floor(item.dano * 2 * mult * surge));
     const row = document.createElement("div");
     row.className = "row";
-    row.innerHTML = `<span>${idx + 1}. ${item.name} | dano ${item.dano} | preco ${preco}</span>`;
+    const trend = getDemandTrend(item.name);
+    row.innerHTML =
+      `<span>${idx + 1}. ${item.name} | dano ${item.dano} | preco ${preco} ` +
+      `<em class="price-badge ${trend.cls}">${trend.label}</em></span>`;
     const b = document.createElement("button");
     b.textContent = "Comprar";
     b.onclick = () => buyItem(idx);
     row.appendChild(b);
     panel.appendChild(row);
   });
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function ensureDemandKey(itemName) {
+  if (typeof state.market.demandByItem[itemName] !== "number") {
+    state.market.demandByItem[itemName] = state.market.baseline;
+  }
+  return state.market.demandByItem[itemName];
+}
+
+function getSurgeMultiplier(itemName) {
+  return clamp(ensureDemandKey(itemName), state.market.min, state.market.max);
+}
+
+function updateDemand(itemName, delta) {
+  const current = ensureDemandKey(itemName);
+  const next = clamp(current + delta, state.market.min, state.market.max);
+  state.market.demandByItem[itemName] = next;
+  state.market.lastSignals.unshift({ itemName, delta, next });
+  state.market.lastSignals = state.market.lastSignals.slice(0, 6);
+}
+
+function coolDownMarket() {
+  const keys = Object.keys(state.market.demandByItem);
+  if (keys.length === 0) return;
+  keys.forEach((key) => {
+    const current = state.market.demandByItem[key];
+    const toward = current > state.market.baseline ? -state.market.driftPerStep : state.market.driftPerStep;
+    const next = current + toward;
+    if ((toward < 0 && next < state.market.baseline) || (toward > 0 && next > state.market.baseline)) {
+      state.market.demandByItem[key] = state.market.baseline;
+      return;
+    }
+    state.market.demandByItem[key] = clamp(next, state.market.min, state.market.max);
+  });
+}
+
+function getDemandTrend(itemName) {
+  const m = getSurgeMultiplier(itemName);
+  if (m >= 1.3) return { label: `Aquecido ${Math.round(m * 100)}%`, cls: "hot" };
+  if (m <= 0.9) return { label: `Oferta ${Math.round(m * 100)}%`, cls: "cool" };
+  return { label: `Estavel ${Math.round(m * 100)}%`, cls: "stable" };
+}
+
+function getMarketPulseLabel() {
+  const vals = Object.values(state.market.demandByItem);
+  if (vals.length === 0) return "Mercado estavel";
+  const avg = vals.reduce((acc, cur) => acc + cur, 0) / vals.length;
+  if (avg >= 1.25) return "Mercado aquecido";
+  if (avg <= 0.9) return "Mercado em oferta";
+  return "Mercado estavel";
+}
+
+function getMarketSummary() {
+  const last = state.market.lastSignals[0];
+  if (!last) return "Precos reagem a compra/venda e esfriam com exploracao.";
+  const verb = last.delta > 0 ? "subiu" : "caiu";
+  return `${last.itemName} ${verb}. Tendencia atual ${Math.round(last.next * 100)}%.`;
 }
 
 function renderShrine() {
@@ -356,6 +479,7 @@ function move() {
   if (state.progressoLocal < passosN) {
     state.progressoLocal += 1;
     state.passos += 1;
+    coolDownMarket();
     tickShrineCooldown();
     maybeRandomFlavor();
     checkEvent(state.localAtual);
@@ -627,6 +751,7 @@ function checkBattleEnd() {
     if (adapt && adapt.message) log(adapt.message, "warn");
     p.gainXp(state.xpReward, state, log);
     state.gold += state.goldReward;
+    maybeDropAffixLoot();
     shiftReputation("vila", 4, "Monstro derrotado.");
     shiftReputation("selva", -3, "Criaturas da selva reagiram.");
 
@@ -708,17 +833,100 @@ function buyItem(idx) {
   if (!item) return;
 
   const mult = FactionReputation.getShopPriceMultiplier(state.reputation);
-  const preco = Math.max(1, Math.floor(item.dano * 2 * mult));
+  const surge = getSurgeMultiplier(item.name);
+  const preco = Math.max(1, Math.floor(item.dano * 2 * mult * surge));
   if (state.gold < preco) {
     log("Pobre demais para comprar.", "bad");
     return;
   }
 
   state.gold -= preco;
-  getInventory(state.player.name).push(item);
+  getInventory(state.player.name).push(createAffixWeapon(item, { forcedRarity: "Comum" }));
+  updateDemand(item.name, 0.16);
   log(`Comprou ${item.name} por ${preco} ouro.`, "good");
   shiftReputation("vila", 2, "Compra concluida.");
   renderAll();
+}
+
+function sellItem(index) {
+  const inv = getInventory(state.player.name);
+  const item = inv[index];
+  if (!item) return;
+  if (state.player.wep && state.player.wep.displayName === item.displayName) {
+    log("Nao e possivel vender a arma equipada.", "bad");
+    return;
+  }
+  const mult = FactionReputation.getShopPriceMultiplier(state.reputation);
+  const surge = getSurgeMultiplier(item.name.split(" - ")[0]);
+  const sellPrice = Math.max(1, Math.floor((item.dano * mult * surge) / 1.45));
+  inv.splice(index, 1);
+  state.gold += sellPrice;
+  updateDemand(item.name.split(" - ")[0], -0.12);
+  log(`Vendeu ${item.name} por ${sellPrice} ouro.`, "warn");
+  shiftReputation("vila", 1, "Venda para a vila.");
+  renderAll();
+}
+
+function pickRarity() {
+  const total = state.loot.rarityWeights.reduce((acc, item) => acc + item.weight, 0);
+  let roll = rand(1, total);
+  for (const entry of state.loot.rarityWeights) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry;
+  }
+  return state.loot.rarityWeights[0];
+}
+
+function rollAffix(type) {
+  const table = {
+    espada: [
+      { label: "Corte Cruel", damage: 2, buff: 0 },
+      { label: "Passo Afiado", damage: 1, buff: 1 }
+    ],
+    machado: [
+      { label: "Impacto Brutal", damage: 3, buff: 0 },
+      { label: "Peso de Guerra", damage: 2, buff: 1 }
+    ],
+    arco: [
+      { label: "Mirada Certeira", damage: 1, buff: 2 },
+      { label: "Arco de Cacada", damage: 2, buff: 1 }
+    ],
+    magia: [
+      { label: "Runa Volatil", damage: 2, buff: 1 },
+      { label: "Canal Arcano", damage: 1, buff: 2 }
+    ]
+  };
+  const options = table[type] || [{ label: "Forja Simples", damage: 0, buff: 0 }];
+  return options[rand(0, options.length - 1)];
+}
+
+function createAffixWeapon(baseWeapon, options = {}) {
+  const rarity = options.forcedRarity
+    ? state.loot.rarityWeights.find((entry) => entry.key === options.forcedRarity) || state.loot.rarityWeights[0]
+    : pickRarity();
+  const affix = rollAffix(baseWeapon.type);
+  const damage = Math.max(1, Math.floor(baseWeapon.dano * rarity.damageMult) + affix.damage);
+  const buff = Math.max(0, baseWeapon.buff + rarity.buffDelta + affix.buff);
+  const displayName = `${baseWeapon.name} - ${affix.label}`;
+  return {
+    ...baseWeapon,
+    name: displayName,
+    dano: damage,
+    buff,
+    rarity: rarity.key,
+    rarityClass: rarity.css,
+    affixLabel: `Afixo: ${affix.label} | dano +${affix.damage} | bonus +${affix.buff}`,
+    displayName
+  };
+}
+
+function maybeDropAffixLoot() {
+  const base = state.shopStock[rand(0, state.shopStock.length - 1)];
+  const dropped = createAffixWeapon(base);
+  getInventory(state.player.name).push(dropped);
+  state.loot.lastDrops.unshift(dropped);
+  state.loot.lastDrops = state.loot.lastDrops.slice(0, 4);
+  log(`Drop encontrado: ${dropped.displayName} [${dropped.rarity}]`, "good");
 }
 
 function upgradeStat() {
@@ -780,6 +988,7 @@ function renderAll() {
   renderInventory();
   renderShop();
   renderShrine();
+  renderLootFeed();
   updateCombatButtons();
 }
 
@@ -851,6 +1060,7 @@ function startGame() {
 
   getInventory(state.player.name);
   getInventory("vilajero");
+  state.shopStock.forEach((item) => ensureDemandKey(item.name));
 
   $("start-screen").classList.add("hidden");
   $("game-screen").classList.remove("hidden");

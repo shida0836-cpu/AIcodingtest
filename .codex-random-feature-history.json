@@ -5,6 +5,8 @@
     "adaptive-difficulty-pulses",
     "parry-overheat",
     "faction-reputation-shifts",
-    "risk-reward-shrine"
+    "risk-reward-shrine",
+    "dynamic-loot-affixes",
+    "shop-surge-pricing"
   ]
 }

@@ -11,6 +11,7 @@
   --line: #2f4a45;
   --panel: rgba(11, 20, 18, 0.55);
   --shrine: #d4a85f;
+  --loot: #7ec6ff;
 }
 
 * {
@@ -86,6 +87,12 @@ body {
   color: var(--muted);
 }
 
+.market-hint {
+  margin-top: 0.35rem;
+  color: #ffd88e;
+  font-size: 0.92rem;
+}
+
 .hud-actions {
   display: flex;
   align-items: center;
@@ -120,6 +127,16 @@ body {
 .tag.shrine {
   border-color: #7f642d;
   color: #ffdba2;
+}
+
+.tag.loot {
+  border-color: #336186;
+  color: var(--loot);
+}
+
+.tag.market {
+  border-color: #84632a;
+  color: #f6d28f;
 }
 
 .subpanel {
@@ -190,6 +207,81 @@ button:disabled {
   border-radius: 10px;
   border: 1px dashed var(--line);
   background: var(--panel);
+}
+
+.loot-panel {
+  margin-top: 0.7rem;
+  padding: 0.75rem;
+  border-radius: 10px;
+  border: 1px solid #305268;
+  background: linear-gradient(180deg, rgba(17, 31, 41, 0.9), rgba(11, 20, 28, 0.85));
+}
+
+.loot-panel h3 {
+  margin: 0 0 0.45rem;
+}
+
+.loot-item {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(126, 198, 255, 0.25);
+  margin-bottom: 0.4rem;
+}
+
+.shop-trend-wrap {
+  margin-bottom: 0.55rem;
+  color: var(--muted);
+}
+
+.price-badge {
+  margin-left: 0.35rem;
+  font-style: normal;
+  font-size: 0.76rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+}
+
+.price-badge.hot {
+  color: #ffb6a0;
+}
+
+.price-badge.stable {
+  color: #cdd9de;
+}
+
+.price-badge.cool {
+  color: #95db9d;
+}
+
+.rarity {
+  display: inline-block;
+  width: fit-content;
+  margin-left: 0.35rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 0.75rem;
+  border: 1px solid currentColor;
+}
+
+.rarity.common {
+  color: #b9c7ce;
+}
+
+.rarity.uncommon {
+  color: #7fe68f;
+}
+
+.rarity.rare {
+  color: #7ec6ff;
+}
+
+.rarity.epic {
+  color: #d39aff;
 }
 
 #shrine-panel {
@@ -271,5 +363,18 @@ input:focus-visible {
   .tag {
     flex: 1 1 100%;
     text-align: center;
+  }
+
+  .loot-item {
+    padding: 0.55rem;
+  }
+
+  #inventory-panel .row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  #inventory-panel .row button {
+    width: 100%;
   }
 }
