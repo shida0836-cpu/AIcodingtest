@@ -214,6 +214,17 @@ body {
   color: #ffdba3;
 }
 
+.tag.combo {
+  border-color: #5a4a86;
+  color: #d6c8ff;
+}
+
+.tag.combo.active {
+  border-color: #8457d6;
+  color: #efe5ff;
+  background: rgba(101, 64, 180, 0.2);
+}
+
 .objectives-panel {
   margin-bottom: 0.75rem;
   border-color: #2e5f55;
@@ -238,6 +249,27 @@ body {
 
 .weather-panel h2 {
   margin: 0;
+}
+
+.combo-panel {
+  margin-bottom: 0.75rem;
+  border-color: #5f4b8d;
+  background: linear-gradient(180deg, #241b35, #171126);
+}
+
+.combo-panel h2 {
+  margin: 0;
+}
+
+.combo-summary {
+  margin: 0.35rem 0 0.35rem;
+  color: #ddceff;
+}
+
+.combo-detail {
+  margin-top: 0.35rem;
+  color: #bfb0e8;
+  font-size: 0.92rem;
 }
 
 .weather-summary {
@@ -593,6 +625,10 @@ input:focus-visible {
   }
 
   .weather-panel {
+    padding: 0.7rem;
+  }
+
+  .combo-panel {
     padding: 0.7rem;
   }
 

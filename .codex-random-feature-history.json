@@ -1,17 +1,6 @@
 {
   "version": 1,
   "selected_ids": [
-    "combo-mutators",
-    "adaptive-difficulty-pulses",
-    "parry-overheat",
-    "faction-reputation-shifts",
-    "risk-reward-shrine",
-    "dynamic-loot-affixes",
-    "shop-surge-pricing",
-    "enemy-evolution-tags",
-    "rogue-objectives",
-    "last-stand-mechanic",
-    "crafting-breakthrough",
-    "weather-impact-system"
+    "combo-mutators"
   ]
 }

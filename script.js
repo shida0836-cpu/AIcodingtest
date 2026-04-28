@@ -142,6 +142,13 @@ const state = {
     spdBonus: 2,
     triggeredThisBattle: false
   },
+  combo: {
+    streak: 0,
+    best: 0,
+    milestones: [3, 5, 8],
+    activeMutator: null,
+    turnsLeft: 0
+  },
   hdef: false,
   inventories: new Map(),
   shopStock: [
@@ -288,6 +295,12 @@ function renderCombatHud() {
       : "Ultima Chance esgotada";
 
   const weather = getWeatherState();
+  const combo = state.combo;
+  const comboState = combo.activeMutator
+    ? `Combo ${combo.streak} | ${combo.activeMutator.label} (${combo.turnsLeft} turno)`
+    : combo.streak > 0
+      ? `Combo ${combo.streak} em preparo`
+      : "Combo zerado";
   tags.innerHTML = `
     <span class="tag">${pulse}</span>
     <span class="tag warn">${overheat}</span>
@@ -298,6 +311,7 @@ function renderCombatHud() {
     <span class="tag objective">${objectiveState}</span>
     <span class="tag stand ${stand.charges > 0 ? "ready" : "spent"}">${lastStandState}</span>
     <span class="tag weather ${weather.key}">Clima: ${weather.label}</span>
+    <span class="tag combo ${combo.activeMutator ? "active" : "idle"}">${comboState}</span>
   `;
 
   hint.textContent = state.battle
@@ -306,6 +320,26 @@ function renderCombatHud() {
 
   const marketHint = $("market-hint");
   if (marketHint) marketHint.textContent = `Mercado: ${marketState}.`;
+}
+
+function renderComboPanel() {
+  const panel = $("combo-panel");
+  if (!panel) return;
+  const combo = state.combo;
+  const next = combo.milestones.find((milestone) => milestone > combo.streak) || combo.milestones[combo.milestones.length - 1];
+  const until = Math.max(0, next - combo.streak);
+  const status = combo.activeMutator
+    ? `${combo.activeMutator.label} ativo por ${combo.turnsLeft} turno(s).`
+    : `Sem mutador ativo. Faltam ${until} acao(oes) para o proximo marco.`;
+  const detail = combo.activeMutator
+    ? combo.activeMutator.desc
+    : "Aumente o combo com ataques/defesas/overheat sem quebrar sequencia.";
+  panel.innerHTML = `
+    <h2>Mutadores de Combo</h2>
+    <p class="combo-summary">Combo atual: <strong>${combo.streak}</strong> | Recorde da run: <strong>${combo.best}</strong></p>
+    <p>${status}</p>
+    <p class="combo-detail">${detail}</p>
+  `;
 }
 
 function getWeatherState() {
@@ -843,6 +877,8 @@ function checkEvent(nomeLocal) {
 function startBattle(message) {
   state.battle = true;
   state.lastStand.triggeredThisBattle = false;
+  state.combo.streak = 0;
+  clearComboMutator();
   state.enemyEvolution.actionCount.attack = 0;
   state.enemyEvolution.actionCount.defend = 0;
   state.enemyEvolution.actionCount.overheat = 0;
@@ -853,6 +889,8 @@ function startBattle(message) {
 }
 
 function endBattle() {
+  clearComboMutator();
+  state.combo.streak = 0;
   clearLastStandBuff();
   state.lastStand.triggeredThisBattle = false;
   state.battle = false;
@@ -924,6 +962,13 @@ function ataque(alvo, atacante) {
   alvo.hp = Math.max(0, alvo.hp - damage);
   atacante.sta = Math.max(0, atacante.sta - 2);
   log(`${atacante.name} atacou ${alvo.name} e causou ${damage} de dano.`);
+  if (atacante === state.player && alvo === state.inimigo) {
+    if (damage > 0) registerComboSuccess("attack");
+    else breakCombo("Ataque sem dano quebrou o combo.");
+  }
+  if (atacante === state.inimigo && alvo === state.player && damage > 0) {
+    breakCombo("Voce recebeu dano e perdeu o combo.");
+  }
   mostrarStatusCombate();
 }
 
@@ -968,6 +1013,7 @@ function playerTurn(action) {
   if (action === "defend") {
     p.dfcup = true;
     p.fullDef = defesa(i, p);
+    registerComboSuccess("defend");
     log("Voce entrou em postura defensiva.", "good");
     mostrarStatusCombate();
   }
@@ -991,6 +1037,7 @@ function playerTurn(action) {
     const damage = Math.max(1, Math.floor(cdamage(p, i) * 1.6 + p.spd / 3));
     i.hp = Math.max(0, i.hp - damage);
     p.sta = Math.max(0, p.sta - 4);
+    if (damage > 0) registerComboSuccess("overheat");
     log(`Golpe de Overheat acertou ${i.name} causando ${damage} de dano!`, "warn");
     mostrarStatusCombate();
   }
@@ -1000,6 +1047,7 @@ function playerTurn(action) {
   checkBattleEnd();
   tickShrineCombatTurn();
   tickLastStandTurn();
+  tickComboMutatorTurn();
   updateCombatButtons();
   renderAll();
 }
@@ -1055,6 +1103,7 @@ function checkBattleEnd() {
   }
 
   if (p.hp <= 0) {
+    breakCombo("Derrota em combate encerrou o combo.");
     log("Voce perdeu! Recuperando para continuar...", "bad");
     const adapt = AdaptiveDifficulty.pushResult(state.difficulty, "loss");
     if (adapt && adapt.message) log(adapt.message, "warn");
@@ -1087,11 +1136,130 @@ function checkBattleEnd() {
     }
 
     clearEnemyEvolutionTag();
+    clearComboMutator();
     endBattle();
     return true;
   }
 
   return false;
+}
+
+function getComboMilestone(streak) {
+  if (streak >= 8) return 8;
+  if (streak >= 5) return 5;
+  if (streak >= 3) return 3;
+  return 0;
+}
+
+function createComboMutator(milestone) {
+  if (milestone >= 8) {
+    return {
+      key: "tempest",
+      label: "Tempestade Ritmica",
+      desc: "+35% dano, +2 velocidade e esquiva parcial por 3 turnos.",
+      damageMult: 1.35,
+      spdBonus: 2,
+      evadeChance: 0.2,
+      turns: 3
+    };
+  }
+  if (milestone >= 5) {
+    return {
+      key: "ironwall",
+      label: "Muralha Cadenciada",
+      desc: "+20% dano e +3 defesa por 3 turnos.",
+      damageMult: 1.2,
+      dfcBonus: 3,
+      turns: 3
+    };
+  }
+  return {
+    key: "fury",
+    label: "Furia de Abertura",
+    desc: "+15% dano por 2 turnos.",
+    damageMult: 1.15,
+    turns: 2
+  };
+}
+
+function getMutatorMilestone(mutator) {
+  if (!mutator) return 0;
+  if (mutator.key === "tempest") return 8;
+  if (mutator.key === "ironwall") return 5;
+  if (mutator.key === "fury") return 3;
+  return 0;
+}
+
+function applyComboMutator(mutator) {
+  clearComboMutator();
+  state.combo.activeMutator = mutator;
+  state.combo.turnsLeft = mutator.turns;
+  if (mutator.dfcBonus) {
+    state.player.dfc += mutator.dfcBonus;
+    state.player.maxdfc += mutator.dfcBonus;
+  }
+  if (mutator.spdBonus) {
+    state.player.spd += mutator.spdBonus;
+    state.player.maxspd += mutator.spdBonus;
+  }
+  log(`Mutador ativado: ${mutator.label}.`, "good");
+}
+
+function clearComboMutator() {
+  const combo = state.combo;
+  const mutator = combo.activeMutator;
+  if (!mutator || !state.player) {
+    combo.activeMutator = null;
+    combo.turnsLeft = 0;
+    return;
+  }
+  if (mutator.dfcBonus) {
+    state.player.dfc = Math.max(1, state.player.dfc - mutator.dfcBonus);
+    state.player.maxdfc = Math.max(1, state.player.maxdfc - mutator.dfcBonus);
+  }
+  if (mutator.spdBonus) {
+    state.player.spd = Math.max(1, state.player.spd - mutator.spdBonus);
+    state.player.maxspd = Math.max(1, state.player.maxspd - mutator.spdBonus);
+  }
+  combo.activeMutator = null;
+  combo.turnsLeft = 0;
+}
+
+function tickComboMutatorTurn() {
+  const combo = state.combo;
+  if (!combo.activeMutator || !state.battle) return;
+  combo.turnsLeft -= 1;
+  if (combo.turnsLeft > 0) return;
+  clearComboMutator();
+  log("O mutador de combo expirou.", "warn");
+}
+
+function registerComboSuccess(action) {
+  if (!state.battle) return;
+  const combo = state.combo;
+  combo.streak += 1;
+  combo.best = Math.max(combo.best, combo.streak);
+  const milestone = getComboMilestone(combo.streak);
+  if (!milestone) return;
+  const activeMilestone = getMutatorMilestone(combo.activeMutator);
+  const shouldRefresh = !combo.activeMutator || milestone > activeMilestone;
+  if (!shouldRefresh) return;
+  const mutator = createComboMutator(milestone);
+  if (combo.activeMutator && combo.activeMutator.key === mutator.key) {
+    combo.turnsLeft = mutator.turns;
+    log(`Combo mantido: ${mutator.label} renovado.`, "good");
+    return;
+  }
+  applyComboMutator(mutator);
+  if (action === "overheat") log("Seu ritmo ofensivo com overheat acelerou o combo.", "warn");
+}
+
+function breakCombo(reason) {
+  const combo = state.combo;
+  if (combo.streak <= 0 && !combo.activeMutator) return;
+  combo.streak = 0;
+  clearComboMutator();
+  log(reason, "bad");
 }
 
 function trackPlayerPattern(action) {
@@ -1470,6 +1638,7 @@ function renderAll() {
   renderObjectives();
   renderLastStand();
   renderWeather();
+  renderComboPanel();
   updateCombatButtons();
 }
 
@@ -1604,6 +1773,7 @@ function startGame() {
   log("Ultima Chance: ao cair em 0 HP com carga disponivel, voce revive automaticamente.", "warn");
   log("Na Loja da Vila, use a Forja de Precisao para tentar breakthroughs epicos.", "warn");
   log("O mundo agora possui clima dinamico que altera encontros e combate.", "warn");
+  log("Combos agora ativam mutadores temporarios de combate em marcos de sequencia.", "warn");
   renderAll();
 }
 
