@@ -102,6 +102,12 @@ const state = {
     completed: 0,
     rewardsClaimed: 0
   },
+  crafting: {
+    focusLevel: 0,
+    attempts: 0,
+    breakthroughs: 0,
+    activeSession: null
+  },
   lastStand: {
     charges: 1,
     maxCharges: 2,
@@ -197,6 +203,7 @@ function renderStatus() {
     <div>Calor de Parry: ${state.parry.heat}/${state.parry.maxHeat}</div>
     <div>Overheat: ${state.parry.overheatedTurns > 0 ? `Ativo (${state.parry.overheatedTurns} turno)` : "Nao"}</div>
     <div>Pacto do Santuario: ${state.shrine.active ? `Ativo (${state.shrine.activeTurns} turno)` : "Inativo"}</div>
+    <div>Forja de Precisao: foco ${state.crafting.focusLevel}/4 | breakthroughs ${state.crafting.breakthroughs}</div>
     <div>Ultimo loot: ${state.loot.lastDrops[0] ? `${state.loot.lastDrops[0].displayName} (${state.loot.lastDrops[0].rarity})` : "Nenhum"}</div>
   `;
 }
@@ -509,6 +516,41 @@ function renderShop() {
   });
 }
 
+function renderForge() {
+  const panel = $("forge-panel");
+  if (!panel) return;
+  const inv = state.player ? getInventory(state.player.name) : [];
+  const canCraft = inv.length > 0 && !state.battle;
+  const active = state.crafting.activeSession;
+  const focusPct = 40 + state.crafting.focusLevel * 10;
+  const zone = active
+    ? `${Math.max(10, active.targetWindow - active.tolerance)}-${Math.min(95, active.targetWindow + active.tolerance)}`
+    : "-";
+  panel.innerHTML = `
+    <h3>Forja de Precisao</h3>
+    <p class="forge-summary">Chance de breakthrough: <strong>${focusPct}%</strong> | Tentativas: ${state.crafting.attempts} | Sucessos: ${state.crafting.breakthroughs}</p>
+    <p class="forge-hint">${active ? "Sessao ativa: use Golpear no momento certo." : "Inicie uma sessao e tente acertar a janela de tempo da bigorna."}</p>
+    <div class="forge-meter-wrap">
+      <div class="forge-meter">
+        <div class="forge-hit-zone" style="left:${Math.max(0, active ? active.targetWindow - active.tolerance : 0)}%; width:${active ? active.tolerance * 2 : 0}%"></div>
+      </div>
+      <small>Janela alvo: ${zone}% da barra</small>
+    </div>
+  `;
+
+  const startBtn = document.createElement("button");
+  startBtn.textContent = active ? "Reiniciar sessao" : "Iniciar sessao";
+  startBtn.disabled = !canCraft;
+  startBtn.onclick = startForgeSession;
+  panel.appendChild(startBtn);
+
+  const strikeBtn = document.createElement("button");
+  strikeBtn.textContent = "Golpear";
+  strikeBtn.disabled = !active || !canCraft;
+  strikeBtn.onclick = resolveForgeStrike;
+  panel.appendChild(strikeBtn);
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -603,11 +645,17 @@ function showInventory(show) {
 function showShop(show) {
   $("shop-panel").classList.toggle("hidden", !show);
   if (show) renderShop();
+  if (!show) showForge(false);
 }
 
 function showShrine(show) {
   $("shrine-panel").classList.toggle("hidden", !show);
   if (show) renderShrine();
+}
+
+function showForge(show) {
+  $("forge-panel").classList.toggle("hidden", !show);
+  if (show) renderForge();
 }
 
 function toggleStatusMenu() {
@@ -664,6 +712,7 @@ function moveToDirection(dir) {
   state.progressoLocal = 0;
   showShop(false);
   showShrine(false);
+  showForge(false);
   log(`Voce foi para ${state.localAtual}.`, "good");
   checkEvent(state.localAtual);
   renderAll();
@@ -677,6 +726,7 @@ function checkEvent(nomeLocal) {
     if (ev === "loja") {
       log("Voce entrou na loja da vila.", "warn");
       showShop(true);
+      showForge(true);
       continue;
     }
 
@@ -1115,6 +1165,7 @@ function buyItem(idx) {
   log(`Comprou ${item.name} por ${preco} ouro.`, "good");
   shiftReputation("vila", 2, "Compra concluida.");
   renderAll();
+  renderForge();
 }
 
 function sellItem(index) {
@@ -1135,6 +1186,69 @@ function sellItem(index) {
   log(`Vendeu ${item.name} por ${sellPrice} ouro.`, "warn");
   shiftReputation("vila", 1, "Venda para a vila.");
   renderAll();
+  renderForge();
+}
+
+function startForgeSession() {
+  const inv = getInventory(state.player.name);
+  if (inv.length === 0) {
+    log("Voce precisa de ao menos uma arma no inventario para usar a forja.", "bad");
+    return;
+  }
+  const durationMs = rand(1400, 2600);
+  const targetWindow = rand(25, 75);
+  const tolerance = Math.max(6, 12 - state.crafting.focusLevel);
+  state.crafting.activeSession = {
+    startTime: Date.now(),
+    durationMs,
+    targetWindow,
+    tolerance
+  };
+  log("Forja iniciada: prepare o golpe no tempo certo.", "warn");
+  renderForge();
+}
+
+function resolveForgeStrike() {
+  const session = state.crafting.activeSession;
+  const inv = getInventory(state.player.name);
+  if (!session || inv.length === 0) return;
+
+  const elapsed = Date.now() - session.startTime;
+  const gaugePct = Math.max(0, Math.min(100, Math.floor((elapsed / session.durationMs) * 100)));
+  const nearTarget = Math.abs(gaugePct - session.targetWindow) <= session.tolerance;
+  const focusBonus = state.crafting.focusLevel * 0.08;
+  const breakthroughChance = Math.min(0.9, 0.4 + focusBonus + (nearTarget ? 0.22 : 0));
+  const breakthrough = Math.random() < breakthroughChance;
+  const idx = rand(0, inv.length - 1);
+  const target = inv[idx];
+  const base = {
+    name: target.name.split(" - ")[0],
+    dano: Math.max(1, target.dano),
+    type: target.type,
+    buff: target.buff
+  };
+
+  state.crafting.attempts += 1;
+  state.crafting.activeSession = null;
+  if (breakthrough) {
+    state.crafting.breakthroughs += 1;
+    state.crafting.focusLevel = Math.max(0, state.crafting.focusLevel - 1);
+    const forged = createAffixWeapon(base, { forcedRarity: "Epico" });
+    forged.name = `${forged.name} [Forja Suprema]`;
+    forged.displayName = forged.name;
+    forged.affixLabel = `${forged.affixLabel} | breakthrough +3 dano`;
+    forged.dano += 3;
+    inv[idx] = forged;
+    log(`Breakthrough! ${target.name} evoluiu para ${forged.name}.`, "good");
+  } else {
+    state.crafting.focusLevel = Math.min(4, state.crafting.focusLevel + 1);
+    target.dano = Math.max(1, target.dano + 1);
+    target.buff += 1;
+    target.affixLabel = `${target.affixLabel || "Afixo padrao"} | reforco parcial +1 dano/+1 bonus`;
+    log(`Forja parcial: ${target.name} recebeu reforco leve.`, "warn");
+  }
+  renderAll();
+  renderForge();
 }
 
 function pickRarity() {
@@ -1258,6 +1372,7 @@ function renderAll() {
   renderLocation();
   renderInventory();
   renderShop();
+  renderForge();
   renderShrine();
   renderLootFeed();
   renderObjectives();
@@ -1394,6 +1509,7 @@ function startGame() {
   log("Sua reputacao com Vila e Selva altera precos e risco de encontros.");
   log("A run recebeu objetivos secundarios com recompensas cumulativas.", "warn");
   log("Ultima Chance: ao cair em 0 HP com carga disponivel, voce revive automaticamente.", "warn");
+  log("Na Loja da Vila, use a Forja de Precisao para tentar breakthroughs epicos.", "warn");
   renderAll();
 }
 
@@ -1401,12 +1517,24 @@ $("start-btn").addEventListener("click", startGame);
 $("walk-btn").addEventListener("click", () => {
   showInventory(false);
   showShop(false);
+  showForge(false);
   move();
 });
 $("inventory-btn").addEventListener("click", () => {
   showShop(false);
   showShrine(false);
+  showForge(false);
   showInventory(true);
+});
+$("forge-btn").addEventListener("click", () => {
+  if (state.localAtual !== "Loja da Vila") {
+    log("A forja so pode ser usada na Loja da Vila.", "bad");
+    return;
+  }
+  showInventory(false);
+  showShrine(false);
+  showShop(true);
+  showForge(true);
 });
 $("toggle-status-btn").addEventListener("click", toggleStatusMenu);
 $("upgrade-btn").addEventListener("click", upgradeStat);

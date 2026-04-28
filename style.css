@@ -329,12 +329,48 @@ button:disabled {
 
 #inventory-panel,
 #shop-panel,
+#forge-panel,
 #shrine-panel {
   margin-top: 0.7rem;
   padding: 0.7rem;
   border-radius: 10px;
   border: 1px dashed var(--line);
   background: var(--panel);
+}
+
+#forge-panel {
+  border-color: #7b5f2e;
+  background: linear-gradient(180deg, rgba(50, 35, 14, 0.82), rgba(28, 20, 8, 0.82));
+}
+
+.forge-summary {
+  margin: 0.3rem 0 0.45rem;
+  color: #f5d8aa;
+}
+
+.forge-hint {
+  margin: 0 0 0.45rem;
+  color: #dbc59a;
+}
+
+.forge-meter-wrap {
+  margin-bottom: 0.55rem;
+}
+
+.forge-meter {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+  border: 1px solid rgba(255, 216, 149, 0.35);
+}
+
+.forge-hit-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #ffe1aa, #ffb85f);
 }
 
 .loot-panel {
