@@ -97,6 +97,11 @@ const state = {
     activeTag: null,
     tagTurnsLeft: 0
   },
+  objectives: {
+    run: [],
+    completed: 0,
+    rewardsClaimed: 0
+  },
   hdef: false,
   inventories: new Map(),
   shopStock: [
@@ -231,6 +236,9 @@ function renderCombatHud() {
     ? `Loot: ${state.loot.lastDrops[0].rarity}`
     : "Loot: sem drop recente";
   const marketState = getMarketPulseLabel();
+  const objectiveState = state.objectives.run.length > 0
+    ? `Objetivos ${state.objectives.completed}/${state.objectives.run.length}`
+    : "Objetivos inativos";
 
   tags.innerHTML = `
     <span class="tag">${pulse}</span>
@@ -239,6 +247,7 @@ function renderCombatHud() {
     <span class="tag shrine">${shrineState}</span>
     <span class="tag loot">${lootState}</span>
     <span class="tag market">${marketState}</span>
+    <span class="tag objective">${objectiveState}</span>
   `;
 
   hint.textContent = state.battle
@@ -270,6 +279,79 @@ function renderEnemyAdaptation() {
     <span class="adapt-tag">Overheat seguido: ${ovh}</span>
     <span class="adapt-tag counter">${active ? `Counter ativo: ${active.label}` : "Counter ativo: nenhum"}</span>
   `;
+}
+
+function createRunObjectives() {
+  const pool = [
+    { id: "wins", label: "Vencer 3 batalhas", target: 3, progress: 0, reward: { gold: 18, statsPoint: 3 } },
+    { id: "walk", label: "Explorar 14 passos", target: 14, progress: 0, reward: { gold: 10, statsPoint: 2 } },
+    { id: "trade", label: "Comprar 2 itens na loja", target: 2, progress: 0, reward: { gold: 12, statsPoint: 2 } },
+    { id: "merchant", label: "Vender 2 itens", target: 2, progress: 0, reward: { gold: 14, statsPoint: 2 } },
+    { id: "parry", label: "Acertar 2 parries perfeitos", target: 2, progress: 0, reward: { gold: 16, statsPoint: 3 } }
+  ];
+  const picked = [];
+  const used = new Set();
+  const amount = rand(2, 3);
+  while (picked.length < amount && used.size < pool.length) {
+    const idx = rand(0, pool.length - 1);
+    if (used.has(idx)) continue;
+    used.add(idx);
+    picked.push({ ...pool[idx], done: false });
+  }
+  state.objectives.run = picked;
+  state.objectives.completed = 0;
+  state.objectives.rewardsClaimed = 0;
+}
+
+function bumpObjective(id, amount = 1) {
+  if (!state.objectives.run || state.objectives.run.length === 0) return;
+  state.objectives.run.forEach((objective) => {
+    if (objective.id !== id || objective.done) return;
+    objective.progress = Math.min(objective.target, objective.progress + amount);
+    if (objective.progress >= objective.target) {
+      objective.done = true;
+      state.objectives.completed += 1;
+      state.gold += objective.reward.gold;
+      state.statsPoint += objective.reward.statsPoint;
+      state.objectives.rewardsClaimed += 1;
+      log(
+        `Objetivo concluido: ${objective.label}. Recompensa: +${objective.reward.gold} ouro e +${objective.reward.statsPoint} pontos.`,
+        "good"
+      );
+    }
+  });
+}
+
+function renderObjectives() {
+  const list = $("objectives-list");
+  const hint = $("objectives-hint");
+  if (!list || !hint) return;
+  const run = state.objectives.run || [];
+  if (run.length === 0) {
+    list.innerHTML = "<p>Nenhum objetivo gerado para esta run.</p>";
+    hint.textContent = "Inicie a run para receber objetivos aleatorios.";
+    return;
+  }
+
+  const doneCount = run.filter((entry) => entry.done).length;
+  hint.textContent = `${doneCount}/${run.length} concluidos. Recompensas recebidas: ${state.objectives.rewardsClaimed}.`;
+  list.innerHTML = "";
+  run.forEach((objective) => {
+    const pct = Math.floor((objective.progress / objective.target) * 100);
+    const row = document.createElement("div");
+    row.className = `objective-row ${objective.done ? "done" : ""}`;
+    row.innerHTML = `
+      <div class="objective-top">
+        <strong>${objective.label}</strong>
+        <span>${objective.progress}/${objective.target}</span>
+      </div>
+      <div class="objective-track">
+        <div class="objective-fill" style="width:${pct}%"></div>
+      </div>
+      <small>Recompensa: +${objective.reward.gold} ouro, +${objective.reward.statsPoint} pontos</small>
+    `;
+    list.appendChild(row);
+  });
 }
 
 function shiftReputation(faction, delta, reason) {
@@ -512,6 +594,7 @@ function move() {
   if (state.progressoLocal < passosN) {
     state.progressoLocal += 1;
     state.passos += 1;
+    bumpObjective("walk");
     coolDownMarket();
     tickShrineCooldown();
     maybeRandomFlavor();
@@ -747,6 +830,7 @@ function enemyTurn() {
       const perfectParryChance = Math.max(0.2, Math.min(0.55, 0.35 + speedDiff / 100));
       if (Math.random() < perfectParryChance) {
         const parry = ParryOverheat.addPerfectParryHeat(state.parry);
+        bumpObjective("parry");
         p.fullDef = true;
         log("Parry perfeito! Nenhum dano recebido e calor acumulado.", "good");
         if (parry.overheated) {
@@ -790,6 +874,7 @@ function checkBattleEnd() {
     if (adapt && adapt.message) log(adapt.message, "warn");
     p.gainXp(state.xpReward, state, log);
     state.gold += state.goldReward;
+    bumpObjective("wins");
     maybeDropAffixLoot();
     shiftReputation("vila", 4, "Monstro derrotado.");
     shiftReputation("selva", -3, "Criaturas da selva reagiram.");
@@ -968,6 +1053,7 @@ function buyItem(idx) {
 
   state.gold -= preco;
   getInventory(state.player.name).push(createAffixWeapon(item, { forcedRarity: "Comum" }));
+  bumpObjective("trade");
   updateDemand(item.name, 0.16);
   log(`Comprou ${item.name} por ${preco} ouro.`, "good");
   shiftReputation("vila", 2, "Compra concluida.");
@@ -987,6 +1073,7 @@ function sellItem(index) {
   const sellPrice = Math.max(1, Math.floor((item.dano * mult * surge) / 1.45));
   inv.splice(index, 1);
   state.gold += sellPrice;
+  bumpObjective("merchant");
   updateDemand(item.name.split(" - ")[0], -0.12);
   log(`Vendeu ${item.name} por ${sellPrice} ouro.`, "warn");
   shiftReputation("vila", 1, "Venda para a vila.");
@@ -1116,6 +1203,7 @@ function renderAll() {
   renderShop();
   renderShrine();
   renderLootFeed();
+  renderObjectives();
   updateCombatButtons();
 }
 
@@ -1187,6 +1275,7 @@ function startGame() {
 
   getInventory(state.player.name);
   getInventory("vilajero");
+  createRunObjectives();
   state.shopStock.forEach((item) => ensureDemandKey(item.name));
 
   $("start-screen").classList.add("hidden");
@@ -1195,6 +1284,7 @@ function startGame() {
   log("Explicacao basica: treine seus status para nao apanhar.");
   log("No combate: atacar, defender e fugir.");
   log("Sua reputacao com Vila e Selva altera precos e risco de encontros.");
+  log("A run recebeu objetivos secundarios com recompensas cumulativas.", "warn");
   renderAll();
 }
 

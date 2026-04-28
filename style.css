@@ -174,6 +174,63 @@ body {
   color: #f6d28f;
 }
 
+.tag.objective {
+  border-color: #2f7566;
+  color: #96f0da;
+}
+
+.objectives-panel {
+  margin-bottom: 0.75rem;
+  border-color: #2e5f55;
+  background: linear-gradient(180deg, #172825, #111f1c);
+}
+
+.objectives-head h2 {
+  margin: 0;
+}
+
+#objectives-hint {
+  margin: 0.35rem 0 0.6rem;
+  color: #b7d8d0;
+}
+
+.objectives-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.objective-row {
+  border: 1px solid #32584f;
+  border-radius: 9px;
+  padding: 0.55rem;
+  background: rgba(9, 17, 15, 0.5);
+}
+
+.objective-row.done {
+  border-color: #3f7d56;
+  background: rgba(13, 36, 22, 0.55);
+}
+
+.objective-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.objective-track {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin-bottom: 0.25rem;
+}
+
+.objective-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #5ac8a9, #9aebdd);
+}
+
 .subpanel {
   margin-top: 0.85rem;
   border-top: 1px solid var(--line);
@@ -411,6 +468,11 @@ input:focus-visible {
   .adapt-tag {
     width: 100%;
     text-align: center;
+  }
+
+  .objective-top {
+    flex-direction: column;
+    gap: 0.2rem;
   }
 
   #inventory-panel .row {
