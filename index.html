@@ -1,0 +1,94 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RPG Meia Versao - JS</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <h1>RPG Meia Versao</h1>
+      <p>Sem engine, puro HTML/CSS/JS</p>
+    </header>
+
+    <section id="start-screen" class="card">
+      <h2>Comecar</h2>
+      <label for="player-name">Nome da personagem</label>
+      <input id="player-name" type="text" maxlength="24" placeholder="Digite seu nome" />
+      <button id="start-btn">Iniciar jogo</button>
+    </section>
+
+    <section id="game-screen" class="hidden">
+      <section class="hud card">
+        <div>
+          <h2>Painel de Combate</h2>
+          <p id="battle-hint">Explore para encontrar inimigos e ganhar reputacao.</p>
+        </div>
+        <div class="hud-actions">
+          <button id="toggle-status-btn" type="button" aria-expanded="false">Abrir status</button>
+          <div id="battle-tags" class="battle-tags"></div>
+        </div>
+      </section>
+
+      <article id="status-menu" class="card secondary-menu hidden">
+        <h2>Status</h2>
+        <div id="status-panel"></div>
+        <div id="faction-panel" class="subpanel"></div>
+        <div class="status-upgrade">
+          <h3>Evoluir status</h3>
+          <div class="row">
+            <select id="upgrade-stat">
+              <option value="maxhp">Vida</option>
+              <option value="maxstr">Forca</option>
+              <option value="maxspd">Velocidade</option>
+              <option value="maxdfc">Defesa</option>
+              <option value="maxsta">Stamina</option>
+            </select>
+            <input id="upgrade-amount" type="number" min="1" value="1" />
+            <button id="upgrade-btn">Aplicar</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card log-card">
+        <h2>Log</h2>
+        <div id="log"></div>
+      </article>
+
+      <div class="grid">
+        <article class="card compact-card">
+          <h2>Local</h2>
+          <div id="location-panel"></div>
+          <div id="exits-panel" class="row"></div>
+        </article>
+
+        <article class="card compact-card">
+          <h2>Acoes</h2>
+          <div class="row action-row">
+            <button id="walk-btn">Caminhar</button>
+            <button id="inventory-btn">Inventario</button>
+          </div>
+          <div id="combat-controls" class="hidden">
+            <h3>Batalha</h3>
+            <div class="row combat-row">
+              <button id="attack-btn">Atacar</button>
+              <button id="defend-btn">Defender</button>
+              <button id="overheat-btn">Golpe Overheat</button>
+              <button id="flee-btn">Fugir</button>
+            </div>
+          </div>
+          <div id="inventory-panel" class="hidden"></div>
+          <div id="shop-panel" class="hidden"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="./adaptive-difficulty.js"></script>
+  <script src="./parry-overheat.js"></script>
+  <script src="./faction-reputation.js"></script>
+  <script src="./script.js"></script>
+</body>
+</html>
