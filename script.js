@@ -64,6 +64,12 @@ const state = {
   difficulty: AdaptiveDifficulty.createTracker(6),
   parry: ParryOverheat.createState(),
   reputation: FactionReputation.createState(),
+  shrine: {
+    cooldown: 0,
+    activeTurns: 0,
+    active: false,
+    lastOfferCost: 0
+  },
   hdef: false,
   inventories: new Map(),
   shopStock: [
@@ -99,8 +105,15 @@ const locais = {
     descricao: "Ruinas esquecidas de uma civilizacao antiga.",
     oeste: "Floresta",
     norte: "Portao do Castelo",
+    leste: "Santuario Esquecido",
     eventos: ["monstro"],
     passosNecessarios: 20
+  },
+  "Santuario Esquecido": {
+    descricao: "Runas antigas brilham em silencio. O poder cobra um preco.",
+    oeste: "Ruinas Antigas",
+    eventos: ["santuario"],
+    passosNecessarios: 1
   },
   "Portao do Castelo": {
     descricao: "Voce sente uma presenca poderosa atras dos portoes.",
@@ -140,6 +153,7 @@ function renderStatus() {
     <div>Pulso de dificuldade: ${pulse}</div>
     <div>Calor de Parry: ${state.parry.heat}/${state.parry.maxHeat}</div>
     <div>Overheat: ${state.parry.overheatedTurns > 0 ? `Ativo (${state.parry.overheatedTurns} turno)` : "Nao"}</div>
+    <div>Pacto do Santuario: ${state.shrine.active ? `Ativo (${state.shrine.activeTurns} turno)` : "Inativo"}</div>
   `;
 }
 
@@ -179,11 +193,18 @@ function renderCombatHud() {
   const repBias = FactionReputation.getForestEncounterBias(state.reputation);
   const encounter =
     repBias > 0 ? "Selva hostil: mais encontros" : repBias < 0 ? "Selva aliada: menos encontros" : "Selva neutra";
+  const shrineState =
+    state.shrine.active
+      ? `Pacto ativo (${state.shrine.activeTurns} turno)`
+      : state.shrine.cooldown > 0
+        ? `Santuario em recarga (${state.shrine.cooldown} passos)`
+        : "Santuario pronto";
 
   tags.innerHTML = `
     <span class="tag">${pulse}</span>
     <span class="tag warn">${overheat}</span>
     <span class="tag good">${encounter}</span>
+    <span class="tag shrine">${shrineState}</span>
   `;
 
   hint.textContent = state.battle
@@ -265,6 +286,31 @@ function renderShop() {
   });
 }
 
+function renderShrine() {
+  const panel = $("shrine-panel");
+  if (!panel) return;
+  const p = state.player;
+  const hpCost = Math.max(1, Math.floor(p.maxhp * 0.25));
+  const canOffer = state.shrine.cooldown <= 0 && !state.shrine.active && p.hp > hpCost;
+  const status = state.shrine.active
+    ? `Pacto ativo por ${state.shrine.activeTurns} turno(s) de combate.`
+    : state.shrine.cooldown > 0
+      ? `Recarga em ${state.shrine.cooldown} passo(s).`
+      : "Pronto para oferta.";
+
+  panel.innerHTML = `
+    <h3>Santuario de Risco</h3>
+    <p>Oferte <strong>${hpCost} HP</strong> para ganhar +4 Forca e +3 Velocidade por 6 turnos, mas perder 2 Defesa no periodo.</p>
+    <p>${status}</p>
+  `;
+  const btn = document.createElement("button");
+  btn.id = "shrine-offer-btn";
+  btn.textContent = "Fazer oferta";
+  btn.disabled = !canOffer;
+  btn.onclick = offerShrinePact;
+  panel.appendChild(btn);
+}
+
 function showInventory(show) {
   $("inventory-panel").classList.toggle("hidden", !show);
   if (show) renderInventory();
@@ -273,6 +319,11 @@ function showInventory(show) {
 function showShop(show) {
   $("shop-panel").classList.toggle("hidden", !show);
   if (show) renderShop();
+}
+
+function showShrine(show) {
+  $("shrine-panel").classList.toggle("hidden", !show);
+  if (show) renderShrine();
 }
 
 function toggleStatusMenu() {
@@ -305,6 +356,7 @@ function move() {
   if (state.progressoLocal < passosN) {
     state.progressoLocal += 1;
     state.passos += 1;
+    tickShrineCooldown();
     maybeRandomFlavor();
     checkEvent(state.localAtual);
   } else {
@@ -325,6 +377,7 @@ function moveToDirection(dir) {
   state.localAtual = local[dir];
   state.progressoLocal = 0;
   showShop(false);
+  showShrine(false);
   log(`Voce foi para ${state.localAtual}.`, "good");
   checkEvent(state.localAtual);
   renderAll();
@@ -352,6 +405,12 @@ function checkEvent(nomeLocal) {
       state.xpReward = Math.max(3, Math.floor(state.inimigo.lvl / 2));
       state.goldReward = Math.max(1, Math.floor(state.inimigo.lvl / 3));
       startBattle(`Um monstro apareceu: ${state.inimigo.name}!`);
+      continue;
+    }
+
+    if (ev === "santuario") {
+      log("Voce encontrou o Santuario de Risco e Recompensa.", "warn");
+      showShrine(true);
       continue;
     }
 
@@ -508,6 +567,7 @@ function playerTurn(action) {
   if (checkBattleEnd()) return;
   enemyTurn();
   checkBattleEnd();
+  tickShrineCombatTurn();
   updateCombatButtons();
   renderAll();
 }
@@ -719,7 +779,66 @@ function renderAll() {
   renderLocation();
   renderInventory();
   renderShop();
+  renderShrine();
   updateCombatButtons();
+}
+
+function offerShrinePact() {
+  const p = state.player;
+  if (!p) return;
+  const hpCost = Math.max(1, Math.floor(p.maxhp * 0.25));
+  if (state.shrine.cooldown > 0) {
+    log("O santuario ainda esta em recarga.", "bad");
+    return;
+  }
+  if (state.shrine.active) {
+    log("O pacto atual ainda esta ativo.", "bad");
+    return;
+  }
+  if (p.hp <= hpCost) {
+    log("Seu HP esta baixo demais para pagar o preco do santuario.", "bad");
+    return;
+  }
+
+  p.hp = Math.max(1, p.hp - hpCost);
+  p.str += 4;
+  p.maxstr += 4;
+  p.spd += 3;
+  p.maxspd += 3;
+  p.dfc -= 2;
+  p.maxdfc -= 2;
+  state.shrine.active = true;
+  state.shrine.activeTurns = 6;
+  state.shrine.cooldown = 45;
+  state.shrine.lastOfferCost = hpCost;
+  log("Pacto selado: poder aumentado, defesa reduzida. Use com cuidado.", "warn");
+  renderAll();
+}
+
+function clearShrinePact() {
+  const p = state.player;
+  if (!p || !state.shrine.active) return;
+  p.str = Math.max(1, p.str - 4);
+  p.maxstr = Math.max(1, p.maxstr - 4);
+  p.spd = Math.max(1, p.spd - 3);
+  p.maxspd = Math.max(1, p.maxspd - 3);
+  p.dfc += 2;
+  p.maxdfc += 2;
+  p.hp = Math.min(p.hp, p.maxhp);
+  p.sta = Math.min(p.sta, p.maxsta);
+  state.shrine.active = false;
+  state.shrine.activeTurns = 0;
+  log("O poder do santuario terminou e seus atributos voltaram ao normal.", "warn");
+}
+
+function tickShrineCombatTurn() {
+  if (!state.shrine.active || state.shrine.activeTurns <= 0 || !state.battle) return;
+  state.shrine.activeTurns -= 1;
+  if (state.shrine.activeTurns <= 0) clearShrinePact();
+}
+
+function tickShrineCooldown() {
+  if (state.shrine.cooldown > 0) state.shrine.cooldown -= 1;
 }
 
 function rand(min, max) {
@@ -750,6 +869,7 @@ $("walk-btn").addEventListener("click", () => {
 });
 $("inventory-btn").addEventListener("click", () => {
   showShop(false);
+  showShrine(false);
   showInventory(true);
 });
 $("toggle-status-btn").addEventListener("click", toggleStatusMenu);
