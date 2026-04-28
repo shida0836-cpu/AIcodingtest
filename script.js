@@ -87,6 +87,16 @@ const state = {
     driftPerStep: 0.04,
     lastSignals: []
   },
+  enemyEvolution: {
+    playerActionHistory: [],
+    actionCount: {
+      attack: 0,
+      defend: 0,
+      overheat: 0
+    },
+    activeTag: null,
+    tagTurnsLeft: 0
+  },
   hdef: false,
   inventories: new Map(),
   shopStock: [
@@ -237,6 +247,29 @@ function renderCombatHud() {
 
   const marketHint = $("market-hint");
   if (marketHint) marketHint.textContent = `Mercado: ${marketState}.`;
+}
+
+function renderEnemyAdaptation() {
+  const hint = $("adaptation-hint");
+  const tags = $("adaptation-tags");
+  if (!hint || !tags) return;
+
+  const evo = state.enemyEvolution;
+  const active = evo.activeTag;
+  const atk = evo.actionCount.attack;
+  const def = evo.actionCount.defend;
+  const ovh = evo.actionCount.overheat;
+
+  hint.textContent = active
+    ? `Inimigo aprendeu ${active.label.toLowerCase()} por ${evo.tagTurnsLeft} turno(s).`
+    : "Sem contra-estrategia ativa. Varie suas acoes para evitar leitura.";
+
+  tags.innerHTML = `
+    <span class="adapt-tag">Ataques seguidos: ${atk}</span>
+    <span class="adapt-tag">Defesas seguidas: ${def}</span>
+    <span class="adapt-tag">Overheat seguido: ${ovh}</span>
+    <span class="adapt-tag counter">${active ? `Counter ativo: ${active.label}` : "Counter ativo: nenhum"}</span>
+  `;
 }
 
 function shiftReputation(faction, delta, reason) {
@@ -559,6 +592,9 @@ function checkEvent(nomeLocal) {
 
 function startBattle(message) {
   state.battle = true;
+  state.enemyEvolution.actionCount.attack = 0;
+  state.enemyEvolution.actionCount.defend = 0;
+  state.enemyEvolution.actionCount.overheat = 0;
   $("combat-controls").classList.remove("hidden");
   log(message, "warn");
   updateCombatButtons();
@@ -651,6 +687,7 @@ function playerTurn(action) {
     }
   }
   state.chance = p.spd >= i.spd * 1.5 || p.spd * 1.5 <= i.spd ? rand(1, 2) : rand(1, 3);
+  trackPlayerPattern(action);
 
   if (action === "attack") {
     p.dfcup = false;
@@ -728,6 +765,7 @@ function enemyTurn() {
     i.fullDef = defesa(p, i);
     log(`${i.name} se defendeu.`, "warn");
   }
+  tickEvolutionTag();
 }
 
 function checkBattleEnd() {
@@ -741,6 +779,7 @@ function checkBattleEnd() {
     if (adapt && adapt.message) log(adapt.message, "warn");
     p.hp = p.maxhp;
     p.sta = p.maxsta;
+    clearEnemyEvolutionTag();
     endBattle();
     return true;
   }
@@ -763,11 +802,98 @@ function checkBattleEnd() {
       log("Venceu o jogo!", "good");
     }
 
+    clearEnemyEvolutionTag();
     endBattle();
     return true;
   }
 
   return false;
+}
+
+function trackPlayerPattern(action) {
+  const valid = ["attack", "defend", "overheat"];
+  if (!valid.includes(action)) return;
+  const evo = state.enemyEvolution;
+  evo.playerActionHistory.push(action);
+  evo.playerActionHistory = evo.playerActionHistory.slice(-5);
+
+  valid.forEach((key) => {
+    if (key === action) {
+      evo.actionCount[key] += 1;
+      return;
+    }
+    evo.actionCount[key] = 0;
+  });
+
+  maybeApplyEvolutionTag(action);
+}
+
+function maybeApplyEvolutionTag(action) {
+  const evo = state.enemyEvolution;
+  if (!state.inimigo || !state.battle) return;
+  if (evo.actionCount[action] < 2) return;
+
+  const nextKey = action === "attack" ? "brace" : action === "defend" ? "rupture" : "coolhead";
+  if (evo.activeTag && evo.activeTag.key === nextKey) {
+    evo.tagTurnsLeft = 3;
+    return;
+  }
+  if (evo.activeTag) clearEnemyEvolutionTag();
+
+  if (action === "attack") {
+    evo.activeTag = { key: "brace", label: "Blindagem Reativa" };
+    evo.tagTurnsLeft = 3;
+    state.inimigo.dfc += 2;
+    state.inimigo.maxdfc += 2;
+    log(`${state.inimigo.name} leu seu padrao ofensivo e ganhou blindagem temporaria.`, "warn");
+  } else if (action === "defend") {
+    evo.activeTag = { key: "rupture", label: "Ruptura de Guarda" };
+    evo.tagTurnsLeft = 2;
+    state.inimigo.spd += 2;
+    state.inimigo.maxspd += 2;
+    log(`${state.inimigo.name} se adaptou a sua defesa e ficou mais rapido.`, "warn");
+  } else if (action === "overheat") {
+    evo.activeTag = { key: "coolhead", label: "Cabeca Fria" };
+    evo.tagTurnsLeft = 2;
+    state.inimigo.dfc += 1;
+    state.inimigo.maxdfc += 1;
+    state.inimigo.str += 1;
+    state.inimigo.maxstr += 1;
+    log(`${state.inimigo.name} antecipou seu overheat e reforcou postura de contra-ataque.`, "warn");
+  }
+}
+
+function tickEvolutionTag() {
+  const evo = state.enemyEvolution;
+  if (!evo.activeTag || evo.tagTurnsLeft <= 0) return;
+  evo.tagTurnsLeft -= 1;
+  if (evo.tagTurnsLeft <= 0) clearEnemyEvolutionTag();
+}
+
+function clearEnemyEvolutionTag() {
+  const evo = state.enemyEvolution;
+  if (!state.inimigo || !evo.activeTag) {
+    evo.activeTag = null;
+    evo.tagTurnsLeft = 0;
+    return;
+  }
+
+  if (evo.activeTag.key === "brace") {
+    state.inimigo.dfc = Math.max(1, state.inimigo.dfc - 2);
+    state.inimigo.maxdfc = Math.max(1, state.inimigo.maxdfc - 2);
+  } else if (evo.activeTag.key === "rupture") {
+    state.inimigo.spd = Math.max(1, state.inimigo.spd - 2);
+    state.inimigo.maxspd = Math.max(1, state.inimigo.maxspd - 2);
+  } else if (evo.activeTag.key === "coolhead") {
+    state.inimigo.dfc = Math.max(1, state.inimigo.dfc - 1);
+    state.inimigo.maxdfc = Math.max(1, state.inimigo.maxdfc - 1);
+    state.inimigo.str = Math.max(1, state.inimigo.str - 1);
+    state.inimigo.maxstr = Math.max(1, state.inimigo.maxstr - 1);
+  }
+
+  log("A contra-estrategia do inimigo expirou.", "good");
+  evo.activeTag = null;
+  evo.tagTurnsLeft = 0;
 }
 
 function equipItem(index) {
@@ -984,6 +1110,7 @@ function renderAll() {
   renderStatus();
   renderFactions();
   renderCombatHud();
+  renderEnemyAdaptation();
   renderLocation();
   renderInventory();
   renderShop();
